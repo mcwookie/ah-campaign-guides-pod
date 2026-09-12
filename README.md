@@ -15,6 +15,10 @@ Two standalone scripts for prepping a print-on-demand book for Lulu.com:
 pip install pypdf pillow pymupdf requests beautifulsoup4 numpy
 ```
 
+`split_and_resize.py` also shells out to **Ghostscript** (`gs`) to force-embed
+fonts in its outputs (see below); install it with `apt install ghostscript`
+on Debian/Ubuntu.
+
 ## Script 1: split_and_resize.py
 
 ```bash
@@ -25,6 +29,45 @@ python split_and_resize.py my_guide.pdf \
 Defaults to Lulu's **Executive (7x10in)** trim size. Every page is scaled to
 fit (aspect-preserved, nothing cropped or stretched) and centered on the new
 page — no content is lost.
+
+**Margin fill**: when the source page's aspect ratio doesn't match the
+target trim, scale-to-fit leaves blank bars on two opposite edges (e.g.
+white bars above and below every page when fitting 8.5x11 letter pages
+into a 7x10 Executive trim). By default the script fills those bars with
+a **mirrored reflection of the page's own edge content, blurred into a
+soft ambient color bleed** — rasterized only in that thin margin strip,
+so the page reads as a natural full-bleed design instead of floating on
+white, without looking like an obvious flipped duplicate of the edge.
+The actual page content (text, vector art) is untouched and stays full
+vector quality; only the filler strip is raster.
+
+```bash
+# Default: blurred mirror margin fill
+python split_and_resize.py my_guide.pdf ...
+
+# Crisper mirrored reflection, no blur (can look "flipped")
+python split_and_resize.py my_guide.pdf --margin-fill mirror ...
+
+# Flat color extension from an averaged edge sliver, smoothed
+python split_and_resize.py my_guide.pdf --margin-fill edge-blur ...
+
+# Flat color extension, unsmoothed (can look streaky)
+python split_and_resize.py my_guide.pdf --margin-fill edge ...
+
+# Old behavior: leave the margins blank/white
+python split_and_resize.py my_guide.pdf --margin-fill white ...
+```
+
+The five `--margin-fill` modes break down along two independent axes --
+what pixels the fill is built from, and whether it's blurred afterward:
+
+| Mode | Source | Blurred | Looks like |
+|---|---|---|---|
+| `blur` (default) | mirrored reflection | yes | soft ambient color bleed |
+| `mirror` | mirrored reflection | no | crisp, recognizably-flipped duplicate |
+| `edge-blur` | averaged edge sliver | yes | smooth flat gradient |
+| `edge` | averaged edge sliver | no | flat but can look streaky |
+| `white` | none | -- | blank bar (old behavior) |
 
 Other options:
 
@@ -102,6 +145,19 @@ Same `--trim`, `--width`, `--height` flags as script 1, plus:
 
 ## Notes / things worth knowing
 
+- **Font embedding (Lulu upload)**: `split_and_resize.py` copies each source
+  page's content stream through unchanged, so any font the source PDF left
+  un-embedded comes through un-embedded too. FFG's official campaign guide
+  PDFs have shipped pages that use standard Times-Roman/Times-Bold without
+  embedding them (seen in the Dream-Eaters A guide, on the Design Notes and
+  Credits pages) — Lulu's printer rejects uploads with any non-embedded font.
+  To catch this automatically, `split_and_resize.py` now runs both outputs
+  through Ghostscript (`-dEmbedAllFonts=true`) after writing them, which
+  substitutes and embeds any missing standard fonts without touching image
+  quality. This is on by default; pass `--no-font-embed-fix` to skip it, or
+  if `gs` isn't installed the script prints a warning and skips it
+  automatically — in that case, run `pdffonts your_interior.pdf` yourself
+  before uploading and check every row says `yes` in the `emb` column.
 - **Fonts**: the script tries a short list of common serif font names
   (DejaVu Serif, Liberation Serif, FreeSerif, Georgia) and falls back to a
   plain bitmap font if none are found on your system. If your output text
@@ -112,6 +168,11 @@ Same `--trim`, `--width`, `--height` flags as script 1, plus:
   to fit above the disclaimer. If your description text is very long, it
   will get small — trimming the text is better than relying on the
   smallest size.
+- **File size**: margin fill (blur/mirror/edge) adds two small JPEG
+  strips per page (compressed, not raw), which grows a typical interior
+  PDF by roughly 5-20% depending on mode. Use `--margin-fill white` if
+  you'd rather keep the file as small as possible and don't mind the
+  plain white bars.
 - **Proof before bulk ordering**: font substitution, color accents, and
   the auto-generated background will vary by input art. Always order a
   single proof copy before printing multiples.
