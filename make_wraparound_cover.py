@@ -38,7 +38,6 @@ Examples:
 """
 import argparse
 import sys
-import textwrap
 
 import numpy as np
 import requests
@@ -217,16 +216,33 @@ def load_font(style, size):
     return ImageFont.load_default()
 
 
-def draw_wrapped_text(draw, text, font, x, y, max_chars, fill, line_spacing=10,
-                       align="left", center_x=None):
-    wrapper = textwrap.TextWrapper(width=max_chars)
+def wrap_text_to_width(draw, text, font, max_width_px):
+    """Word-wrap text so each rendered line actually fits max_width_px,
+    measured with the real font metrics -- not a guessed character count.
+    Preserves blank lines (paragraph breaks) as empty strings."""
     lines = []
     for para in text.split("\n"):
-        lines.extend(wrapper.wrap(para) if para.strip() else [""])
-        lines.append("")  # blank line between paragraphs
-    if lines and lines[-1] == "":
-        lines.pop()
+        if not para.strip():
+            lines.append("")
+            continue
+        words = para.split()
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            w = draw.textlength(candidate, font=font)
+            if w <= max_width_px or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = word
+        if current:
+            lines.append(current)
+    return lines
 
+
+def draw_wrapped_text(draw, text, font, x, y, max_width_px, fill, line_spacing=10,
+                       align="left", center_x=None):
+    lines = wrap_text_to_width(draw, text, font, max_width_px)
     for line in lines:
         if not line:
             bbox = draw.textbbox((0, 0), "Ag", font=font)
@@ -298,19 +314,28 @@ def build_cover(args):
         draw = ImageDraw.Draw(canvas)
         cursor_y += target_logo_h + int(panel_h_px * 0.035)
 
-    # Campaign name
-    title_font = load_font("bold", int(panel_w_px * 0.075))
+    # Campaign name -- auto-shrink so it wraps to fit text_width instead of
+    # overflowing the page when a name is long or a font renders wide.
+    title_size = int(panel_w_px * 0.075)
+    min_title_size = int(panel_w_px * 0.035)
+    title_text = args.campaign_name.upper()
+    while title_size >= min_title_size:
+        title_font = load_font("bold", title_size)
+        title_lines = wrap_text_to_width(draw, title_text, title_font, text_width)
+        widest = max(draw.textlength(l, font=title_font) for l in title_lines)
+        if widest <= text_width or title_size == min_title_size:
+            break
+        title_size -= 4
     cursor_y = draw_wrapped_text(
-        draw, args.campaign_name.upper(), title_font, text_left, cursor_y,
-        max_chars=18, fill=accent, align="center", center_x=center_x, line_spacing=6,
+        draw, title_text, title_font, text_left, cursor_y, text_width,
+        fill=accent, align="center", center_x=center_x, line_spacing=6,
     )
     cursor_y += int(panel_h_px * 0.03)
 
     # Description body -- auto-shrink the font until it fits above the
     # disclaimer, rather than letting long product copy run off the panel.
     disc_font = load_font("italic", int(panel_w_px * 0.02))
-    disc_max_chars = max(30, int(text_width / (disc_font.size * 0.52)))
-    wrapped = textwrap.wrap(DISCLAIMER_TEXT, width=disc_max_chars)
+    wrapped = wrap_text_to_width(draw, DISCLAIMER_TEXT, disc_font, text_width)
     disc_h_total = 0
     line_heights = []
     for line in wrapped:
@@ -327,11 +352,7 @@ def build_cover(args):
     min_body_size = int(panel_w_px * 0.015)
     while body_size >= min_body_size:
         body_font = load_font("regular", body_size)
-        max_chars = max(30, int(text_width / (body_size * 0.52)))
-        wrapper = textwrap.TextWrapper(width=max_chars)
-        measured_lines = []
-        for para in description.split("\n"):
-            measured_lines.extend(wrapper.wrap(para) if para.strip() else [""])
+        measured_lines = wrap_text_to_width(draw, description, body_font, text_width)
         line_h = draw.textbbox((0, 0), "Ag", font=body_font)[3] + 8
         total_h = sum(line_h if l else line_h // 2 for l in measured_lines)
         if total_h <= available_h or body_size == min_body_size:
@@ -339,8 +360,8 @@ def build_cover(args):
         body_size -= 2
 
     cursor_y = draw_wrapped_text(
-        draw, description, body_font, text_left, cursor_y,
-        max_chars=max_chars, fill=text_color, align="left", line_spacing=8,
+        draw, description, body_font, text_left, cursor_y, text_width,
+        fill=text_color, align="left", line_spacing=8,
     )
     if body_size == min_body_size and total_h > available_h:
         print("Warning: description text is still long at the minimum font size "
