@@ -1,6 +1,6 @@
 # Lulu Cover Tools
 
-Two standalone scripts for prepping a print-on-demand book for Lulu.com:
+Four standalone scripts for prepping print-on-demand books for Lulu.com:
 
 - **`split_and_resize.py`** — splits a source PDF into a 1-page front-cover
   PDF and a remaining-pages interior PDF, resizing both to a Lulu trim size.
@@ -8,6 +8,15 @@ Two standalone scripts for prepping a print-on-demand book for Lulu.com:
   PDF, auto-stylizing a back cover to match your front cover's art and
   color palette, with a title, description text, optional logo, and a
   fan-print disclaimer.
+- **`combine_investigator_rules.py`** — concatenates a folder of
+  investigator-rules-insert PDFs, in release order, into one print-ready
+  PDF at their native Small Square trim (no resizing), automatically
+  fixing press-proof crop marks and non-embedded fonts along the way.
+- **`make_investigator_rules_cover.py`** (+ `arkham_art.py`) — a one-time
+  wraparound cover generator for the combined investigator-rules book,
+  using procedurally generated original background art.
+
+I also want to shout out clayton-grey's reformatted Arkham Horror: The Card Game [standalone scenario rules](https://github.com/clayton-grey/arkham_campaign_guides).  These are already formatted for printing (I use [lulu.com](https://lulu.com) and 7.5"x7.5" is the `small square` book size).  They include two scenarios (`Curse of the Rougarou` and `Carnevale of Horrors`) that haven't been digitized before. All I did was combine them into one pdf and generate a wraparound cover.
 
 ## Install
 
@@ -133,13 +142,123 @@ Same `--trim`, `--width`, `--height` flags as script 1, plus:
 - `--bleed` — bleed per edge in inches (default 0.125, matching Lulu)
 - `--dpi` — render resolution (default 300)
 
+## Script 3: combine_investigator_rules.py
+
+```bash
+python combine_investigator_rules.py ./rules_inserts \
+    --output combined_investigator_rules.pdf
+```
+
+Scans a folder for investigator-rules-insert PDFs named with a two-digit
+release-order prefix (e.g. `01-dwl-ahc65_dunwich_legacy_rules_insert.pdf`,
+`02-ptc-ahc67_rules_insert_v2.pdf`) and concatenates them, in prefix
+order, into one PDF -- pages untouched. Unlike the other two scripts,
+this one does **not** resize anything: these inserts already come at
+Lulu's Small Square (7.5in x 7.5in) trim, and the whole point is to
+print them at that size, not convert them to Executive.
+
+What it checks for you, rather than silently doing the wrong thing:
+
+- **Duplicate prefixes** (two files both starting `03-...`) stop the
+  script with an error naming both files, rather than guessing an order.
+- **Files with no two-digit prefix** are skipped with a note (so a
+  `combined.pdf` from a previous run sitting in the same folder doesn't
+  get swept up into a new one).
+- **Press-proof exports with crop marks** (some releases -- often named
+  with a `-web` suffix -- are exported as full press-ready sheets with
+  visible crop marks and slug area around the actual page, larger than
+  the real trim size) are detected automatically via the PDF's embedded
+  TrimBox and cropped down to it before anything else happens, so the
+  crop marks don't end up baked into your printed book. You'll see a
+  note when this kicks in; no flag needed.
+- **Non-embedded fonts** -- Lulu rejects any interior PDF containing
+  one, even a "standard" font like Times-Roman that every viewer
+  nominally has built in. Some files use a fallback system font for a
+  handful of symbol glyphs their main custom fonts don't include (the
+  ® and © in a copyright line, say), and that fallback often isn't
+  embedded. When detected, just those specific characters are redacted
+  and redrawn with an embedded substitute font (DejaVu Serif or
+  Liberation Serif, auto-detected from common system paths, or point
+  at your own with `--replacement-font`), sampling the surrounding
+  background color so the patch blends in. Nothing else in the file is
+  touched. Disable with `--no-embed-fix` if you'd rather handle it
+  yourself.
+- **Genuine page-size mismatches** (after the TrimBox check above --
+  i.e. an actual different trim size, not just a proof export) stop the
+  script with an error by default. A file at the wrong size usually
+  means the wrong file got dropped in the folder, not something to
+  paper over automatically. Pass `--allow-size-mismatch` if you do want
+  it scaled-to-fit and centered (reusing the same logic as script 1)
+  instead of refusing to proceed.
+
+It also prints a summary table mapping each source file to its final
+page range in the combined PDF, handy for cross-referencing later:
+
+```
+  #  file                                                     pages   final pages
+  1  01-dwl-ahc65_dunwich_legacy_rules_insert.pdf                 2           1-2
+  2  02-ptc-ahc67_rules_insert_v2.pdf                              2           3-4
+```
+
+Other options: `--pattern` to change the glob used to find files
+(default `*.pdf`), `--trim`/`--width`/`--height` if you're ever
+validating against a size other than Small Square.
+
+## Script 4: make_investigator_rules_cover.py (+ arkham_art.py)
+
+```bash
+python make_investigator_rules_cover.py \
+    --logo ah_tcg_logo.png \
+    --output investigator_rules_cover.pdf
+```
+
+A one-time cover generator for the combined investigator-rules book.
+Unlike script 2, it doesn't take an existing front-cover PDF to build
+from -- there's no single "official" cover for a book spanning multiple
+campaigns -- so `arkham_art.py` procedurally generates original cosmic-
+horror background art instead (gradient night sky, starfield, a pale
+glowing moon, a jagged gothic rooftop silhouette, gnarled branch
+shapes, film grain, vignette). This is original generated artwork, not
+a reproduction of any official illustration. The real AH:TCG logo
+lockup is still reused on both panels for authenticity.
+
+Back cover follows the same visual language as the campaign guide
+covers (mirror+blur background, dark panel, title, description, fan
+disclaimer), plus an italicized quote + attribution block, since a
+Lovecraft quote was part of the brief for this one.
+
+Defaults to Lulu's **Small Square (7.5in x 7.5in)** trim -- matching
+script 3's output -- with the same coil-bound-appropriate no-spine,
+0.125in-bleed sizing as script 2.
+
+Everything is overridable:
+
+```bash
+python make_investigator_rules_cover.py \
+    --title "CHAPTER ONE" \
+    --subtitle "INVESTIGATOR RULES" \
+    --quote "Your quote here" \
+    --quote-attribution "– Author, Work" \
+    --description-file my_description.txt \
+    --logo ah_tcg_logo.png \
+    --seed 7 \
+    --output investigator_rules_cover.pdf
+```
+
+`--seed` controls the generated background art -- same seed always
+produces the same art, change it to get a different composition without
+touching any code.
+
 ## Files in this folder
 
 | File | Purpose |
 |---|---|
-| `lulu_sizes.py` | Shared trim-size table used by both scripts |
+| `lulu_sizes.py` | Shared trim-size table used by all scripts |
 | `split_and_resize.py` | Script 1 |
 | `make_wraparound_cover.py` | Script 2 |
+| `combine_investigator_rules.py` | Script 3 |
+| `make_investigator_rules_cover.py` | Script 4 |
+| `arkham_art.py` | Procedural background art generator used by script 4 |
 | `dunwich_legacy_description.txt` | Example description text (The Dunwich Legacy) |
 | `ah_tcg_logo.png` | Example logo asset you can pass to `--logo` |
 
